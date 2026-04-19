@@ -1,0 +1,162 @@
+msgid ""
+msgstr ""
+"Project-Id-Version: rufus-linux 0.1.0\n"
+"Report-Msgid-Bugs-To: \n"
+"POT-Creation-Date: 2026-04-19 12:00+0900\n"
+"PO-Revision-Date: 2026-04-19 12:00+0900\n"
+"Last-Translator: Rufus Linux project\n"
+"Language-Team: Japanese\n"
+"Language: ja\n"
+"MIME-Version: 1.0\n"
+"Content-Type: text/plain; charset=UTF-8\n"
+"Content-Transfer-Encoding: 8bit\n"
+
+msgid "Drive Properties"
+msgstr "ドライブ プロパティ"
+
+msgid "Format Options"
+msgstr "フォーマット オプション"
+
+msgid "Status"
+msgstr "状態"
+
+msgid "Device"
+msgstr "デバイス"
+
+msgid "Boot selection"
+msgstr "ブートの種類"
+
+msgid "Image option"
+msgstr "イメージ オプション"
+
+msgid "Partition scheme"
+msgstr "パーティション構成"
+
+msgid "Target system"
+msgstr "ターゲット システム"
+
+msgid "Volume label"
+msgstr "ボリューム ラベル"
+
+msgid "File system"
+msgstr "ファイル システム"
+
+msgid "Cluster size"
+msgstr "クラスター サイズ"
+
+msgid "(click refresh to scan)"
+msgstr "(更新ボタンを押してスキャン)"
+
+msgid "Rescan devices"
+msgstr "デバイスを再スキャン"
+
+msgid "Disk or ISO image (Please select)"
+msgstr "ディスクまたは ISO イメージ (選択してください)"
+
+msgid "FreeDOS"
+msgstr "FreeDOS"
+
+msgid "Non bootable"
+msgstr "起動不可"
+
+msgid "Standard Windows installation"
+msgstr "Windows 標準インストール"
+
+msgid "Windows To Go"
+msgstr "Windows To Go"
+
+msgid "BIOS or UEFI"
+msgstr "BIOS または UEFI"
+
+msgid "UEFI (non CSM)"
+msgstr "UEFI (非 CSM)"
+
+msgid "List USB Hard Drives"
+msgstr "USB 接続の HDD も一覧表示"
+
+msgid "Add fixes for old BIOSes (extra partition, align, etc.)"
+msgstr "古い BIOS 用の修正を追加 (パーティション/アライメント)"
+
+msgid "Enable runtime UEFI media validation"
+msgstr "UEFI メディア検証を実行時に有効化"
+
+msgid "Default"
+msgstr "既定"
+
+msgid "4096 bytes"
+msgstr "4096 バイト"
+
+msgid "8192 bytes"
+msgstr "8192 バイト"
+
+msgid "16384 bytes"
+msgstr "16384 バイト"
+
+msgid "32768 bytes"
+msgstr "32768 バイト"
+
+msgid "65536 bytes"
+msgstr "65536 バイト"
+
+msgid "Quick format"
+msgstr "クイック フォーマット"
+
+msgid "Create extended label and icon files"
+msgstr "拡張ラベルとアイコン ファイルを作成"
+
+msgid "Check device for bad blocks"
+msgstr "不良ブロックを検査"
+
+msgid "1 pass"
+msgstr "1 パス"
+
+msgid "2 passes"
+msgstr "2 パス"
+
+msgid "3 passes"
+msgstr "3 パス"
+
+msgid "4 passes"
+msgstr "4 パス"
+
+msgid "READY"
+msgstr "準備完了"
+
+msgid "DONE"
+msgstr "完了"
+
+msgid "Failed — see log"
+msgstr "失敗しました — ログを確認してください"
+
+msgid "Starting…"
+msgstr "開始中…"
+
+msgid "SELECT"
+msgstr "選択"
+
+msgid "START"
+msgstr "スタート"
+
+msgid "CLOSE"
+msgstr "閉じる"
+
+msgid "Cancel"
+msgstr "キャンセル"
+
+msgid "Start"
+msgstr "開始"
+
+msgid "Select a device first."
+msgstr "先にデバイスを選択してください。"
+
+msgid "Select an image first."
+msgstr "先にイメージを選択してください。"
+
+msgid "Root required — re-run with `sudo` or `pkexec` (see README)."
+msgstr "root 権限が必要です。 `sudo` または `pkexec` で再実行してください (README 参照)。"
+
+msgid "ALL data on %.32s (%.1f GiB, %.96s) will be destroyed. Continue?"
+msgstr "%.32s (%.1f GiB, %.96s) のすべてのデータが消去されます。続行しますか?"
+
+msgid "unknown"
+msgstr "不明"
