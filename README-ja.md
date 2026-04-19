@@ -31,7 +31,7 @@ sudo apt install \
 ### ビルド
 
 ```bash
-git clone https://github.com/yourname/rufus-linux
+git clone https://github.com/soichi11208/rufus-linux
 cd rufus-linux
 meson setup build
 meson compile -C build
