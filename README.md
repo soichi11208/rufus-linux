@@ -120,4 +120,4 @@ rufus-linux/
 
 ## License
 
-See [LICENSE.txt](LICENSE.txt). rufus-linux inherits GPLv3 from upstream Rufus.
+See [LICENSE](LICENSE). rufus-linux inherits GPLv3 from upstream Rufus.
