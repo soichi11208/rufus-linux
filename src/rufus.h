@@ -105,6 +105,12 @@ typedef struct {
     bool                old_bios_fixes;
     bool                uefi_media_validation;
     uint32_t            wue_flags;            /* WUE_* bitmask */
+
+    /* LiveBoot persistence: when set, a second partition (ext4, labelled
+     * for casper/live-boot) is created after the image is written so a
+     * live Linux USB can save changes across reboots. */
+    bool                persistent;
+    uint32_t            persistent_size_mb;   /* size of the persistence partition */
 } rufus_state_t;
 
 extern rufus_state_t g_state;
@@ -131,6 +137,8 @@ typedef struct {
     bool                old_bios_fixes;
     bool                uefi_media_validation;
     uint32_t            wue_flags;
+    bool                persistent;
+    uint32_t            persistent_size_mb;
 } format_job_t;
 
 /* drive.c */
@@ -148,6 +156,11 @@ int   format_and_write(const format_job_t *job, progress_cb_t cb, void *user);
 /* part.c */
 int   part_create(const char *disk, partition_scheme_t scheme, fs_type_t fs);
 void  part_node_for(const char *disk, int index, char *out, size_t outsz);
+/* Add an ext4 persistence partition in the free space following the
+ * partitions an image already wrote. size_mb == 0 means "use all the
+ * remaining free space". The resulting partition node is returned in out. */
+int   part_create_persistence(const char *disk, uint32_t size_mb,
+                              char *out, size_t outsz);
 
 /* mkfs.c */
 int   mkfs_unmount_all(const char *disk);

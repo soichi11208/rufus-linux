@@ -20,16 +20,21 @@ typedef struct {
 } worker_ctx_t;
 
 typedef struct {
-    double        fraction;
-    char          status[256];
-    worker_ctx_t *ctx;
+    double               fraction;
+    char                 status[256];
+    /* Copy the callback + user_data by value rather than holding the
+     * worker_ctx_t: the GTask completion callback (higher priority than
+     * g_idle) can run and free the ctx before still-queued progress
+     * messages drain, which would otherwise be a use-after-free. */
+    worker_progress_cb_t on_progress;
+    gpointer             user;
 } progress_msg_t;
 
 static gboolean deliver_progress(gpointer data)
 {
     progress_msg_t *m = data;
-    if (m->ctx && m->ctx->on_progress)
-        m->ctx->on_progress(m->fraction, m->status, m->ctx->user_data);
+    if (m->on_progress)
+        m->on_progress(m->fraction, m->status, m->user);
     g_free(m);
     return G_SOURCE_REMOVE;
 }
@@ -38,8 +43,9 @@ static void worker_progress_cb(double frac, const char *status, void *user)
 {
     worker_ctx_t   *ctx = user;
     progress_msg_t *m   = g_new0(progress_msg_t, 1);
-    m->fraction = frac;
-    m->ctx      = ctx;
+    m->fraction    = frac;
+    m->on_progress = ctx->on_progress;
+    m->user        = ctx->user_data;
     if (status) strncpy(m->status, status, sizeof m->status - 1);
     g_idle_add(deliver_progress, m);
 }

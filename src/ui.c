@@ -21,7 +21,9 @@
  */
 #define RUFUS_USE_GTK 1
 #include "rufus.h"
+#include <limits.h>
 #include <string.h>
+#include <unistd.h>
 
 typedef struct {
     GtkApplication *app;
@@ -47,6 +49,9 @@ typedef struct {
     GtkCheckButton *bad_blocks;
     GtkDropDown    *nb_passes;
 
+    GtkCheckButton *persistent;
+    GtkSpinButton  *persistent_size;   /* MiB */
+
     GtkLabel       *status;
     GtkProgressBar *progress;
     GtkButton      *start_btn;
@@ -54,6 +59,8 @@ typedef struct {
 } rufus_ui_t;
 
 static rufus_ui_t ui;
+
+static void ui_sync_to_state(void);
 
 static GtkDropDown *make_dropdown(const char *const *items)
 {
@@ -229,11 +236,11 @@ static void on_confirm_response(GObject *src, GAsyncResult *res, gpointer user)
     if (err) { g_error_free(err); return; }
     if (choice != 1) return;   /* 1 = "Start", 0 = "Cancel" */
 
-    /* Need root to open the raw block device for writing. */
+    /* We elevate at launch (see ensure_root() in main.c), so by here we are
+     * already root. Guard anyway in case that path was bypassed. */
     if (!privops_have_root()) {
         gtk_label_set_text(ui.status,
-            _("Root required — re-run with `sudo` or `pkexec` "
-              "(see README)."));
+            _("Root required — re-run with `sudo` or `pkexec`."));
         rufus_log("Not running as root; aborting write.");
         return;
     }
@@ -268,6 +275,10 @@ static void on_confirm_response(GObject *src, GAsyncResult *res, gpointer user)
         gtk_check_button_get_active(ui.old_bios_fixes);
     job.uefi_media_validation =
         gtk_check_button_get_active(ui.uefi_validation);
+    job.persistent =
+        gtk_check_button_get_active(ui.persistent);
+    job.persistent_size_mb =
+        (uint32_t)gtk_spin_button_get_value_as_int(ui.persistent_size);
 
     /* Also sync list_usb_hdds back to g_state so next rescan is consistent. */
     g_state.list_usb_hdds =
@@ -293,6 +304,18 @@ static void on_start_clicked(GtkButton *btn, gpointer user)
     }
 
     const drive_info_t *d = &g_state.drives[g_state.selected_drive];
+
+    /* A 0-byte device is a removable slot with no medium (e.g. an empty
+     * card reader, or a USB stick the kernel failed to enumerate). Writing
+     * is impossible — tell the user plainly instead of failing mid-write. */
+    if (d->size_bytes == 0) {
+        gtk_label_set_text(ui.status,
+            _("Selected device reports 0 bytes — no media inserted, "
+              "or the drive is not readable. Re-plug it and Refresh."));
+        rufus_log("Refusing to write: %s reports 0 bytes (no media).",
+                  d->devnode);
+        return;
+    }
     char msg[512];
     /* %.*s caps to keep GCC happy — devnode/model are capped to the
      * widths we actually display elsewhere. */
@@ -334,6 +357,10 @@ static void ui_sync_to_state(void)
         gtk_check_button_get_active(ui.old_bios_fixes);
     g_state.uefi_media_validation =
         gtk_check_button_get_active(ui.uefi_validation);
+    g_state.persistent =
+        gtk_check_button_get_active(ui.persistent);
+    g_state.persistent_size_mb =
+        (uint32_t)gtk_spin_button_get_value_as_int(ui.persistent_size);
     const char *lbl = gtk_editable_get_text(GTK_EDITABLE(ui.label));
     if (lbl) g_strlcpy(g_state.volume_label, lbl,
                        sizeof g_state.volume_label);
@@ -386,6 +413,14 @@ static void on_fs_changed(GtkDropDown *d, GParamSpec *p, gpointer user)
     (void)p; (void)user;
     guint idx = gtk_drop_down_get_selected(d);
     if (idx < FS_COUNT) g_state.fs_type = (fs_type_t)idx;
+}
+
+/* Grey out the size spinner unless persistence is enabled. */
+static void on_persistent_toggled(GtkCheckButton *btn, gpointer user)
+{
+    (void)user;
+    gtk_widget_set_sensitive(GTK_WIDGET(ui.persistent_size),
+                             gtk_check_button_get_active(btn));
 }
 
 GtkWidget *rufus_build_main_window(GtkApplication *app)
@@ -574,6 +609,23 @@ GtkWidget *rufus_build_main_window(GtkApplication *app)
     gtk_box_append(GTK_BOX(bb_row), GTK_WIDGET(ui.nb_passes));
     gtk_box_append(GTK_BOX(outer), bb_row);
 
+    /* Persistent partition (LiveBoot) — only meaningful for live Linux
+     * ISOs written in image mode, but harmless to expose always. */
+    GtkWidget *persist_row = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 8);
+    ui.persistent = make_check(_("Create persistent partition (LiveBoot)"));
+    g_signal_connect(ui.persistent, "toggled",
+                     G_CALLBACK(on_persistent_toggled), NULL);
+    gtk_box_append(GTK_BOX(persist_row), GTK_WIDGET(ui.persistent));
+    /* Size in MiB: 0 = use all remaining space. Cap at 1 TiB. */
+    ui.persistent_size = GTK_SPIN_BUTTON(
+        gtk_spin_button_new_with_range(0, 1024 * 1024, 256));
+    gtk_spin_button_set_value(ui.persistent_size, 4096);
+    gtk_widget_set_tooltip_text(GTK_WIDGET(ui.persistent_size),
+        _("Persistence size in MiB (0 = use all free space)"));
+    gtk_widget_set_sensitive(GTK_WIDGET(ui.persistent_size), FALSE);
+    gtk_box_append(GTK_BOX(persist_row), GTK_WIDGET(ui.persistent_size));
+    gtk_box_append(GTK_BOX(outer), persist_row);
+
     /* ---------- Status + progress ---------- */
     gtk_box_append(GTK_BOX(outer), section_label(_("Status")));
     gtk_box_append(GTK_BOX(outer), separator());
@@ -613,6 +665,12 @@ GtkWidget *rufus_build_main_window(GtkApplication *app)
     gtk_check_button_set_active(ui.uefi_validation, g_state.uefi_media_validation);
     if (g_state.bad_block_passes >= 1 && g_state.bad_block_passes <= 4)
         gtk_drop_down_set_selected(ui.nb_passes, g_state.bad_block_passes - 1);
+    gtk_check_button_set_active(ui.persistent, g_state.persistent);
+    if (g_state.persistent_size_mb > 0)
+        gtk_spin_button_set_value(ui.persistent_size,
+                                  g_state.persistent_size_mb);
+    gtk_widget_set_sensitive(GTK_WIDGET(ui.persistent_size),
+                             g_state.persistent);
     if (g_state.volume_label[0])
         gtk_editable_set_text(GTK_EDITABLE(ui.label), g_state.volume_label);
 

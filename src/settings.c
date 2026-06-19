@@ -66,6 +66,8 @@ void settings_load(rufus_state_t *st)
     READ_BOOL("list_usb_hdds",         st->list_usb_hdds);
     READ_BOOL("old_bios_fixes",        st->old_bios_fixes);
     READ_BOOL("uefi_media_validation", st->uefi_media_validation);
+    READ_BOOL("persistent",            st->persistent);
+    v = (int)st->persistent_size_mb; READ_INT("persistent_size_mb", v); st->persistent_size_mb = (uint32_t)v;
     READ_STR("volume_label", st->volume_label, sizeof st->volume_label);
     READ_STR("image_path",   st->image_path,   sizeof st->image_path);
 
@@ -93,6 +95,8 @@ void settings_save(const rufus_state_t *st)
     g_key_file_set_boolean(kf, GROUP, "list_usb_hdds",         st->list_usb_hdds);
     g_key_file_set_boolean(kf, GROUP, "old_bios_fixes",        st->old_bios_fixes);
     g_key_file_set_boolean(kf, GROUP, "uefi_media_validation", st->uefi_media_validation);
+    g_key_file_set_boolean(kf, GROUP, "persistent",            st->persistent);
+    g_key_file_set_integer(kf, GROUP, "persistent_size_mb",    (int)st->persistent_size_mb);
     g_key_file_set_string (kf, GROUP, "volume_label",          st->volume_label);
     g_key_file_set_string (kf, GROUP, "image_path",            st->image_path);
 

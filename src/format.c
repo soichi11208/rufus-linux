@@ -32,8 +32,12 @@ static int dd_write(const char *src, const char *dst,
     }
     int out = open(dst, O_WRONLY | O_CLOEXEC | O_SYNC);
     if (out < 0) {
-        rufus_log("open(%s): %s — need CAP_SYS_ADMIN or root",
-                  dst, strerror(errno));
+        const char *hint = (errno == EACCES || errno == EPERM)
+                               ? " — need root"
+                           : (errno == ENOMEDIUM)
+                               ? " — no media in drive (empty card reader?)"
+                               : "";
+        rufus_log("open(%s): %s%s", dst, strerror(errno), hint);
         close(in);
         return -1;
     }
@@ -200,6 +204,62 @@ static int iso_install_fat(const format_job_t *job,
     return 0;
 }
 
+/*
+ * Create a LiveBoot persistence partition after an image has been written.
+ *
+ * Most live-Linux ISOs look for a partition by filesystem label:
+ *   - Debian live-boot / casper :  "persistence" (+ /persistence.conf "/ union")
+ *   - Ubuntu (older casper)     :  "casper-rw"
+ * We label the partition "persistence" — the format Debian and current
+ * Ubuntu live-boot both honour — and drop a persistence.conf so the whole
+ * filesystem is unioned and changes survive reboots.
+ */
+static int make_persistence(const format_job_t *job,
+                            progress_cb_t cb, void *user)
+{
+    const drive_info_t *d = &job->drive;
+
+    if (cb) cb(0.90, "Creating persistence partition…", user);
+    char part[64];
+    if (part_create_persistence(d->devnode, job->persistent_size_mb,
+                                part, sizeof part) != 0)
+        return -1;
+
+    /* Wait for the new partition node to appear. */
+    for (int i = 0; i < 30; i++) {
+        struct stat s;
+        if (stat(part, &s) == 0) break;
+        usleep(100 * 1000);
+    }
+
+    if (cb) cb(0.95, "Formatting persistence (ext4)…", user);
+    if (mkfs_make(part, FS_EXT4, "persistence") != 0) {
+        rufus_log("persistence: mkfs.ext4 failed");
+        return -1;
+    }
+
+    /* Mount and write persistence.conf so live-boot unions the root fs. */
+    char mnt[64];
+    snprintf(mnt, sizeof mnt, "/tmp/rufus-persist-%d", (int)getpid());
+    mkdir(mnt, 0755);
+    const char *mnt_argv[] = { "mount", "-t", "ext4", part, mnt, NULL };
+    if (run_simple(mnt_argv) == 0) {
+        char conf[128];
+        snprintf(conf, sizeof conf, "%s/persistence.conf", mnt);
+        FILE *f = fopen(conf, "w");
+        if (f) { fputs("/ union\n", f); fclose(f); }
+        sync();
+        const char *u_argv[] = { "umount", mnt, NULL };
+        run_simple(u_argv);
+    } else {
+        rufus_log("persistence: mount failed; conf not written");
+    }
+    rmdir(mnt);
+
+    if (cb) cb(1.0, "Done.", user);
+    return 0;
+}
+
 int format_and_write(const format_job_t *job, progress_cb_t cb, void *user)
 {
     if (!job) return -1;
@@ -215,14 +275,20 @@ int format_and_write(const format_job_t *job, progress_cb_t cb, void *user)
     case BOOT_ISO_IMAGE:
         if (iso_is_isohybrid(job->image_path)) {
             if (cb) cb(0.02, "Writing image…", user);
-            return dd_write(job->image_path, d->devnode, cb, user);
+            if (dd_write(job->image_path, d->devnode, cb, user) != 0)
+                return -1;
+            if (job->persistent) return make_persistence(job, cb, user);
+            return 0;
         }
         /* Pure ISO9660 — extract files onto a fresh FAT32 partition. */
         return iso_install_fat(job, cb, user);
 
     case BOOT_DD_IMAGE:
         if (cb) cb(0.02, "Writing image…", user);
-        return dd_write(job->image_path, d->devnode, cb, user);
+        if (dd_write(job->image_path, d->devnode, cb, user) != 0)
+            return -1;
+        if (job->persistent) return make_persistence(job, cb, user);
+        return 0;
 
     case BOOT_NON_BOOTABLE:
     case BOOT_FREEDOS:

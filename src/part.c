@@ -53,6 +53,103 @@ void part_node_for(const char *disk, int index, char *out, size_t outsz)
     snprintf(out, outsz, "%s%s%d", disk, needs_p ? "p" : "", index);
 }
 
+/*
+ * Add a persistence partition in the free space that follows whatever an
+ * image has already written to `disk` (e.g. an isohybrid live-Linux ISO
+ * dd'd to the raw device). We read the existing partition table instead of
+ * creating a fresh one, locate the largest trailing free region, and carve
+ * a partition of `size_mb` (or the whole region when size_mb == 0).
+ */
+int part_create_persistence(const char *disk, uint32_t size_mb,
+                            char *out, size_t outsz)
+{
+    PedDevice *dev = ped_device_get(disk);
+    if (!dev) {
+        rufus_log("persistence: ped_device_get(%s) failed", disk);
+        return -1;
+    }
+
+    PedDisk *disk_obj = ped_disk_new(dev);
+    if (!disk_obj) {
+        rufus_log("persistence: ped_disk_new failed (no readable table)");
+        ped_device_destroy(dev);
+        return -1;
+    }
+
+    /* Find the largest free region; live ISOs leave their unused tail free. */
+    PedGeometry best = {0};
+    bool found = false;
+    for (PedPartition *p = ped_disk_next_partition(disk_obj, NULL); p;
+         p = ped_disk_next_partition(disk_obj, p)) {
+        if (p->type != PED_PARTITION_FREESPACE) continue;
+        if (!found || p->geom.length > best.length) {
+            best = p->geom;
+            found = true;
+        }
+    }
+    if (!found || best.length < 2048) {
+        rufus_log("persistence: no usable free space on %s", disk);
+        ped_disk_destroy(disk_obj);
+        ped_device_destroy(dev);
+        return -1;
+    }
+
+    PedSector start = best.start;
+    PedSector end   = best.end;
+    if (size_mb > 0) {
+        /* sectors are dev->sector_size bytes; clamp to the free region. */
+        PedSector want = (PedSector)((uint64_t)size_mb * 1024 * 1024 /
+                                     dev->sector_size);
+        if (want < best.length) end = start + want - 1;
+    }
+
+    PedFileSystemType *fs_type = ped_file_system_type_get("ext4");
+    PedGeometry *geom = ped_geometry_new(dev, start, end - start + 1);
+    PedPartition *part = ped_partition_new(disk_obj, PED_PARTITION_NORMAL,
+                                           fs_type, geom->start, geom->end);
+    if (!part) {
+        rufus_log("persistence: ped_partition_new failed");
+        ped_geometry_destroy(geom);
+        ped_disk_destroy(disk_obj);
+        ped_device_destroy(dev);
+        return -1;
+    }
+
+    PedConstraint *cons = ped_constraint_exact(geom);
+    if (!ped_disk_add_partition(disk_obj, part, cons)) {
+        rufus_log("persistence: ped_disk_add_partition failed");
+        ped_constraint_destroy(cons);
+        ped_geometry_destroy(geom);
+        ped_disk_destroy(disk_obj);
+        ped_device_destroy(dev);
+        return -1;
+    }
+    int part_num = part->num;
+    ped_constraint_destroy(cons);
+    ped_geometry_destroy(geom);
+
+    if (!ped_disk_commit(disk_obj)) {
+        rufus_log("persistence: ped_disk_commit failed");
+        ped_disk_destroy(disk_obj);
+        ped_device_destroy(dev);
+        return -1;
+    }
+    ped_disk_destroy(disk_obj);
+    ped_device_destroy(dev);
+
+    int fd = open(disk, O_RDONLY | O_CLOEXEC);
+    if (fd >= 0) {
+        if (ioctl(fd, BLKRRPART) != 0)
+            rufus_log("persistence: BLKRRPART: %s", strerror(errno));
+        close(fd);
+    }
+
+    part_node_for(disk, part_num, out, outsz);
+    rufus_log("persistence: partition %d (%s) created on %s",
+              part_num, out, disk);
+    return 0;
+}
+
 int part_create(const char *disk, partition_scheme_t scheme, fs_type_t fs)
 {
     PedDevice *dev = ped_device_get(disk);
