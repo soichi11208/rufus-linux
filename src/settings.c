@@ -1,111 +1,146 @@
 /*
  * settings.c: persist user choices to ~/.config/rufus/settings.ini.
  *
- * The Windows build uses the registry; on Linux the equivalent is a
- * plain INI file under XDG_CONFIG_HOME (falling back to ~/.config).
- * GKeyFile gives us atomic write and quoting for free.
+ * The Windows build uses the registry; on Linux the equivalent is a plain
+ * "[section]\nkey=value" INI file under XDG_CONFIG_HOME (falling back to
+ * ~/.config). No external dependency — a from-scratch reader/writer, in
+ * keeping with the rest of this rewrite avoiding GLib/GTK entirely.
  */
-#define RUFUS_USE_GTK 1
 #include "rufus.h"
-#include <glib.h>
-#include <glib/gstdio.h>
+#include <errno.h>
+#include <stdio.h>
+#include <stdlib.h>
 #include <string.h>
+#include <sys/stat.h>
+#include <sys/types.h>
+#include <unistd.h>
 
 #define GROUP "rufus"
 
-static char *settings_path(void)
+/* mkdir -p, stopping quietly on EEXIST (same tolerance GLib's
+ * g_mkdir_with_parents gave us). */
+static void mkdir_parents(char *path, mode_t mode)
 {
-    const char *xdg = g_getenv("XDG_CONFIG_HOME");
-    char *dir = xdg && *xdg ? g_build_filename(xdg, "rufus", NULL)
-                            : g_build_filename(g_get_home_dir(), ".config", "rufus", NULL);
-    g_mkdir_with_parents(dir, 0700);
-    char *path = g_build_filename(dir, "settings.ini", NULL);
-    g_free(dir);
-    return path;
+    for (char *p = path + 1; *p; p++) {
+        if (*p != '/') continue;
+        *p = '\0';
+        if (mkdir(path, mode) < 0 && errno != EEXIST) { /* ignore; caller's
+            open() will fail loudly enough if this really mattered */ }
+        *p = '/';
+    }
+    if (mkdir(path, mode) < 0 && errno != EEXIST) { /* same */ }
+}
+
+static void settings_path(char *out, size_t outsz)
+{
+    const char *xdg  = getenv("XDG_CONFIG_HOME");
+    const char *home = getenv("HOME");
+    char dir[MAX_PATH_LEN];
+
+    if (xdg && *xdg)
+        snprintf(dir, sizeof dir, "%s/rufus", xdg);
+    else
+        snprintf(dir, sizeof dir, "%s/.config/rufus", home ? home : "");
+
+    mkdir_parents(dir, 0700);
+    snprintf(out, outsz, "%s/settings.ini", dir);
+}
+
+/* Trim trailing '\r'/'\n'/whitespace in place. */
+static void rstrip(char *s)
+{
+    size_t n = strlen(s);
+    while (n > 0 && (s[n-1] == '\n' || s[n-1] == '\r' ||
+                     s[n-1] == ' '  || s[n-1] == '\t')) s[--n] = '\0';
 }
 
 void settings_load(rufus_state_t *st)
 {
     if (!st) return;
-    char *path = settings_path();
-    GKeyFile *kf = g_key_file_new();
-    GError *err = NULL;
-    if (!g_key_file_load_from_file(kf, path, G_KEY_FILE_NONE, &err)) {
-        if (err && err->code != G_FILE_ERROR_NOENT)
-            rufus_log("settings_load: %s", err->message);
-        g_clear_error(&err);
-        g_key_file_free(kf);
-        g_free(path);
-        return;
+    char path[MAX_PATH_LEN];
+    settings_path(path, sizeof path);
+
+    FILE *f = fopen(path, "r");
+    if (!f) return;   /* absent file = defaults; not an error */
+
+    char line[1024];
+    bool in_group = false;
+    while (fgets(line, sizeof line, f)) {
+        rstrip(line);
+        char *p = line;
+        while (*p == ' ' || *p == '\t') p++;
+        if (!*p || *p == '#' || *p == ';') continue;
+
+        if (*p == '[') {
+            char *end = strchr(p, ']');
+            in_group = end && strncmp(p + 1, GROUP, strlen(GROUP)) == 0 &&
+                       (p + 1 + strlen(GROUP)) == end;
+            continue;
+        }
+        if (!in_group) continue;
+
+        char *eq = strchr(p, '=');
+        if (!eq) continue;
+        *eq = '\0';
+        const char *key = p;
+        const char *val = eq + 1;
+
+        if      (!strcmp(key, "partition_scheme"))      st->partition_scheme      = (partition_scheme_t)atoi(val);
+        else if (!strcmp(key, "target_system"))         st->target_system         = (target_system_t)atoi(val);
+        else if (!strcmp(key, "fs_type"))                st->fs_type              = (fs_type_t)atoi(val);
+        else if (!strcmp(key, "cluster_size"))           st->cluster_size         = (uint32_t)strtoul(val, NULL, 10);
+        else if (!strcmp(key, "quick_format"))           st->quick_format          = atoi(val) != 0;
+        else if (!strcmp(key, "check_bad_blocks"))       st->check_bad_blocks      = atoi(val) != 0;
+        else if (!strcmp(key, "bad_block_passes"))       st->bad_block_passes      = atoi(val);
+        else if (!strcmp(key, "list_usb_hdds"))          st->list_usb_hdds         = atoi(val) != 0;
+        else if (!strcmp(key, "old_bios_fixes"))         st->old_bios_fixes        = atoi(val) != 0;
+        else if (!strcmp(key, "uefi_media_validation"))  st->uefi_media_validation = atoi(val) != 0;
+        else if (!strcmp(key, "persistent"))             st->persistent            = atoi(val) != 0;
+        else if (!strcmp(key, "persistent_size_mb"))     st->persistent_size_mb    = (uint32_t)strtoul(val, NULL, 10);
+        else if (!strcmp(key, "volume_label"))           { strncpy(st->volume_label, val, sizeof st->volume_label - 1); }
+        else if (!strcmp(key, "image_path"))             { strncpy(st->image_path,   val, sizeof st->image_path   - 1); }
     }
-
-    /* Read with sensible fallbacks — missing keys are not errors. */
-#define READ_INT(key, dst) do { \
-    GError *e = NULL; \
-    int v = g_key_file_get_integer(kf, GROUP, key, &e); \
-    if (!e) (dst) = v; else g_clear_error(&e); \
-} while (0)
-#define READ_BOOL(key, dst) do { \
-    GError *e = NULL; \
-    gboolean v = g_key_file_get_boolean(kf, GROUP, key, &e); \
-    if (!e) (dst) = v; else g_clear_error(&e); \
-} while (0)
-#define READ_STR(key, dst, sz) do { \
-    char *s = g_key_file_get_string(kf, GROUP, key, NULL); \
-    if (s) { g_strlcpy((dst), s, (sz)); g_free(s); } \
-} while (0)
-
-    int v = 0;
-    v = (int)st->partition_scheme; READ_INT("partition_scheme", v); st->partition_scheme = (partition_scheme_t)v;
-    v = (int)st->target_system;    READ_INT("target_system",    v); st->target_system    = (target_system_t)v;
-    v = (int)st->fs_type;          READ_INT("fs_type",          v); st->fs_type          = (fs_type_t)v;
-    v = (int)st->cluster_size;     READ_INT("cluster_size",     v); st->cluster_size     = (uint32_t)v;
-    READ_BOOL("quick_format",          st->quick_format);
-    READ_BOOL("check_bad_blocks",      st->check_bad_blocks);
-    READ_INT ("bad_block_passes",      st->bad_block_passes);
-    READ_BOOL("list_usb_hdds",         st->list_usb_hdds);
-    READ_BOOL("old_bios_fixes",        st->old_bios_fixes);
-    READ_BOOL("uefi_media_validation", st->uefi_media_validation);
-    READ_BOOL("persistent",            st->persistent);
-    v = (int)st->persistent_size_mb; READ_INT("persistent_size_mb", v); st->persistent_size_mb = (uint32_t)v;
-    READ_STR("volume_label", st->volume_label, sizeof st->volume_label);
-    READ_STR("image_path",   st->image_path,   sizeof st->image_path);
-
-#undef READ_INT
-#undef READ_BOOL
-#undef READ_STR
-
-    g_key_file_free(kf);
-    g_free(path);
+    fclose(f);
 }
 
 void settings_save(const rufus_state_t *st)
 {
     if (!st) return;
-    char *path = settings_path();
-    GKeyFile *kf = g_key_file_new();
+    char path[MAX_PATH_LEN];
+    settings_path(path, sizeof path);
 
-    g_key_file_set_integer(kf, GROUP, "partition_scheme",      (int)st->partition_scheme);
-    g_key_file_set_integer(kf, GROUP, "target_system",         (int)st->target_system);
-    g_key_file_set_integer(kf, GROUP, "fs_type",               (int)st->fs_type);
-    g_key_file_set_integer(kf, GROUP, "cluster_size",          (int)st->cluster_size);
-    g_key_file_set_boolean(kf, GROUP, "quick_format",          st->quick_format);
-    g_key_file_set_boolean(kf, GROUP, "check_bad_blocks",      st->check_bad_blocks);
-    g_key_file_set_integer(kf, GROUP, "bad_block_passes",      st->bad_block_passes);
-    g_key_file_set_boolean(kf, GROUP, "list_usb_hdds",         st->list_usb_hdds);
-    g_key_file_set_boolean(kf, GROUP, "old_bios_fixes",        st->old_bios_fixes);
-    g_key_file_set_boolean(kf, GROUP, "uefi_media_validation", st->uefi_media_validation);
-    g_key_file_set_boolean(kf, GROUP, "persistent",            st->persistent);
-    g_key_file_set_integer(kf, GROUP, "persistent_size_mb",    (int)st->persistent_size_mb);
-    g_key_file_set_string (kf, GROUP, "volume_label",          st->volume_label);
-    g_key_file_set_string (kf, GROUP, "image_path",            st->image_path);
+    /* Write to a temp file then rename — same atomicity guarantee GKeyFile
+     * gave us, so a crash mid-write never corrupts the previous settings. */
+    char tmp[MAX_PATH_LEN + 8];
+    snprintf(tmp, sizeof tmp, "%s.tmp", path);
 
-    GError *err = NULL;
-    if (!g_key_file_save_to_file(kf, path, &err)) {
-        rufus_log("settings_save: %s", err ? err->message : "?");
-        g_clear_error(&err);
+    FILE *f = fopen(tmp, "w");
+    if (!f) { rufus_log("settings_save: fopen %s: %s", tmp, strerror(errno)); return; }
+
+    fprintf(f, "[%s]\n", GROUP);
+    fprintf(f, "partition_scheme=%d\n",      (int)st->partition_scheme);
+    fprintf(f, "target_system=%d\n",         (int)st->target_system);
+    fprintf(f, "fs_type=%d\n",               (int)st->fs_type);
+    fprintf(f, "cluster_size=%u\n",          st->cluster_size);
+    fprintf(f, "quick_format=%d\n",          st->quick_format ? 1 : 0);
+    fprintf(f, "check_bad_blocks=%d\n",      st->check_bad_blocks ? 1 : 0);
+    fprintf(f, "bad_block_passes=%d\n",      st->bad_block_passes);
+    fprintf(f, "list_usb_hdds=%d\n",         st->list_usb_hdds ? 1 : 0);
+    fprintf(f, "old_bios_fixes=%d\n",        st->old_bios_fixes ? 1 : 0);
+    fprintf(f, "uefi_media_validation=%d\n", st->uefi_media_validation ? 1 : 0);
+    fprintf(f, "persistent=%d\n",            st->persistent ? 1 : 0);
+    fprintf(f, "persistent_size_mb=%u\n",    st->persistent_size_mb);
+    fprintf(f, "volume_label=%s\n",          st->volume_label);
+    fprintf(f, "image_path=%s\n",            st->image_path);
+
+    if (fclose(f) != 0) {
+        rufus_log("settings_save: write %s: %s", tmp, strerror(errno));
+        unlink(tmp);
+        return;
     }
-    g_chmod(path, 0600);
-    g_key_file_free(kf);
-    g_free(path);
+    chmod(tmp, 0600);
+    if (rename(tmp, path) != 0) {
+        rufus_log("settings_save: rename %s -> %s: %s", tmp, path, strerror(errno));
+        unlink(tmp);
+    }
 }

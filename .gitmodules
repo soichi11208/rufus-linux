@@ -1,0 +1,3 @@
+[submodule "third_party/stilus"]
+	path = third_party/stilus
+	url = https://github.com/soichi11208/stilus-GUI

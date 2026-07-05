@@ -23,12 +23,6 @@
 #  define N_(s)  (s)
 #endif
 
-void i18n_init(void);
-
-#ifdef RUFUS_USE_GTK
-#  include <gtk/gtk.h>
-#endif
-
 #ifndef RUFUS_VERSION
 #define RUFUS_VERSION "0.1.0-dev"
 #endif
@@ -42,6 +36,18 @@ void i18n_init(void);
 #define WUE_BYPASS_HARDWARE_CHECKS    (1u << 0)  /* TPM/SecureBoot/RAM/CPU */
 #define WUE_BYPASS_ONLINE_ACCOUNT     (1u << 1)  /* OOBE BypassNRO */
 #define WUE_DISABLE_DATA_COLLECTION   (1u << 2)  /* hide EULA/privacy prompts */
+
+/*
+ * Everything below is implemented in plain C (drive.c, format.c, ...) and
+ * called from both the plain-C modules and the C++ UI modules (ui.cpp,
+ * main.cpp, worker.cpp). Wrap it so C++ callers get C linkage instead of
+ * mangled names.
+ */
+#ifdef __cplusplus
+extern "C" {
+#endif
+
+void i18n_init(void);
 
 typedef enum {
     BOOT_NONE = 0,
@@ -196,20 +202,33 @@ int   hash_file(const char *path,
 /* log.c */
 void  rufus_log(const char *fmt, ...);
 
-#ifdef RUFUS_USE_GTK
-void        rufus_log_set_widget(GtkTextBuffer *buf);
-GtkWidget  *rufus_build_main_window(GtkApplication *app);
+#ifdef __cplusplus
+} /* extern "C" */
+#endif
 
-/* worker.c: run format_and_write on a background thread. Callbacks are
- * always invoked on the main (GTK) thread. */
+/*
+ * UI layer (stilus-based, C++). Only declared/used from the C++ translation
+ * units (ui.cpp, main.cpp, worker.cpp) — plain C modules never see this
+ * block, matching how RUFUS_USE_GTK used to gate the old GTK declarations.
+ */
+#ifdef RUFUS_USE_STILUS
+
 typedef void (*worker_progress_cb_t)(double fraction, const char *status,
-                                     gpointer user);
-typedef void (*worker_done_cb_t)    (int rc, gpointer user);
+                                     void *user);
+typedef void (*worker_done_cb_t)(int rc, void *user);
 
+/* worker.cpp: run format_and_write on a background thread. Callbacks are
+ * always invoked on the main (UI) thread via Window::request_animation_frame
+ * polling — never directly from the worker thread. */
 void worker_run_format(const format_job_t  *job,
                        worker_progress_cb_t on_progress,
                        worker_done_cb_t     on_done,
-                       gpointer             user_data);
-#endif
+                       void                *user_data);
+
+/* ui.cpp: build the main window and run the stilus event loop until the
+ * user closes it. Returns a process exit status. */
+int rufus_run_ui(void);
+
+#endif /* RUFUS_USE_STILUS */
 
 #endif /* RUFUS_H */

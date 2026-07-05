@@ -1,0 +1,6 @@
+option(
+  'stilus_root',
+  type: 'string',
+  value: '',
+  description: 'Absolute path to the stilus checkout (defaults to auto-detect: ../stilus, .., then /mnt/ssd4/stilus).',
+)
