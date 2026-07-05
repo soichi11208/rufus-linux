@@ -1,6 +1,6 @@
 # rufus-linux
 
-[Rufus](https://rufus.ie) の Linux 移植版です。USB フラッシュドライブのフォーマットとブータブルドライブの作成を行います。GUI は GTK4 を使用しており、Windows 版のレイアウトをできる限り再現しています。
+[Rufus](https://rufus.ie) の Linux 移植版です。USB フラッシュドライブのフォーマットとブータブルドライブの作成を行います。GUI は自作の C++20 製ミニマル GUI ツールキット [stilus](https://github.com/soichi11208/stilus) を使用し（GUI 系の実行時依存なし・完全静的リンク可能）、Windows 版のレイアウトをできる限り再現しています。
 
 ## 機能
 
@@ -11,7 +11,8 @@
 - ファイルシステムの作成（FAT32 / exFAT / NTFS / ext4 / btrfs / UDF）
 - Syslinux インストール（FreeDOS 形式の FAT32 ブータブルスティック）
 - ハッシュ計算（MD5 / SHA-1 / SHA-256 / SHA-512、OpenSSL EVP）
-- バックグラウンドワーカーによる書き込み（GTask）— 書き込み中も UI は応答可能
+- バックグラウンドスレッドによる書き込み — 書き込み中も UI は応答可能
+- stilus による自己完結型 GUI（Wayland / X11 バックエンド、GTK 非依存）
 
 ## ビルド方法
 
@@ -20,7 +21,7 @@
 ```bash
 sudo apt install \
     meson ninja-build pkg-config \
-    libgtk-4-dev \
+    g++ \
     libudev-dev \
     libblkid-dev \
     libparted-dev \
@@ -28,14 +29,20 @@ sudo apt install \
     libcurl4-openssl-dev
 ```
 
+stilus は git サブモジュール（`third_party/stilus`）として同梱しているので、
+GTK など外部の GUI ツールキットをインストールする必要はありません。
+
 ### ビルド
 
 ```bash
-git clone https://github.com/soichi11208/rufus-linux
+git clone --recurse-submodules https://github.com/soichi11208/rufus-linux
 cd rufus-linux
 meson setup build
 meson compile -C build
 ```
+
+サブモジュールを指定せずクローン済みの場合は、ビルド前に
+`git submodule update --init --recursive` を実行してください。
 
 ### インストール（polkit 連携を使う場合）
 
@@ -86,17 +93,19 @@ rufus-linux/
 ├── README-ja.md        (このファイル)
 ├── res/
 │   └── org.rufus.linux.policy   # polkit アクション定義
+├── third_party/
+│   └── stilus/        stilus GUI ツールキット（git サブモジュール）
 └── src/
     ├── rufus.h         共通型・プロトタイプ宣言
-    ├── main.c          GtkApplication エントリーポイント
-    ├── ui.c            GTK4 メインウィンドウ
+    ├── main.cpp        stilus アプリケーションエントリーポイント
+    ├── ui.cpp          stilus メインウィンドウ
     ├── drive.c         USB ドライブ列挙（libudev）
     ├── iso.c           イメージ種別判定（マジックバイト検査）
     ├── part.c          パーティションテーブル作成（libparted）
     ├── mkfs.c          mkfs.* / syslinux の fork+exec ラッパー
     ├── format.c        書き込みオーケストレータ
     ├── hash.c          MD5/SHA ハッシュ計算（OpenSSL EVP）
-    ├── worker.c        バックグラウンドワーカー（GTask）
+    ├── worker.cpp      バックグラウンドワーカースレッド
     ├── privops.c       pkexec 権限昇格
     └── log.c           ログ出力（stderr + アプリ内バッファ）
 ```
@@ -109,7 +118,7 @@ rufus-linux/
 | ディスク操作 | DeviceIoControl | ioctl (BLKGETSIZE64 等) |
 | パーティション | VDS | libparted |
 | ファイルシステム | 内蔵フォーマッタ | mkfs.* fork+exec |
-| GUI | Win32 ダイアログ | GTK4 |
+| GUI | Win32 ダイアログ | stilus（C++20、Wayland/X11、静的リンク） |
 | ハッシュ | Win32 CryptAPI | OpenSSL EVP |
 | 権限昇格 | UAC | polkit / pkexec |
 | 設定の保存 | HKCU レジストリ | `~/.config/rufus/settings.ini` (GKeyFile) |

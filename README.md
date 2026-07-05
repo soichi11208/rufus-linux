@@ -1,8 +1,10 @@
 # rufus-linux
 
 Linux port of [Rufus](https://rufus.ie) — a utility for formatting and creating
-bootable USB drives. Uses GTK4 for the UI and stays as close to the original
-Windows layout as possible.
+bootable USB drives. The UI is built on [stilus](https://github.com/soichi11208/stilus),
+a minimal C++20 GUI toolkit that fully statically links (no runtime GUI
+dependencies), while staying as close to the original Windows layout as
+possible.
 
 ## Features
 
@@ -13,7 +15,8 @@ Windows layout as possible.
 - Filesystem creation (FAT32 / exFAT / NTFS / ext4 / btrfs / UDF)
 - Syslinux install for FreeDOS-style bootable FAT32 sticks
 - Hash verification (MD5 / SHA-1 / SHA-256 / SHA-512, OpenSSL EVP)
-- Background writer via GTask — UI stays responsive during writes
+- Background writer thread — UI stays responsive during writes
+- Self-contained GUI via stilus (Wayland / X11 backends, no GTK dependency)
 
 ## Build
 
@@ -22,7 +25,7 @@ Windows layout as possible.
 ```bash
 sudo apt install \
     meson ninja-build pkg-config \
-    libgtk-4-dev \
+    g++ \
     libudev-dev \
     libblkid-dev \
     libparted-dev \
@@ -30,14 +33,20 @@ sudo apt install \
     libcurl4-openssl-dev
 ```
 
+stilus is bundled as a git submodule (`third_party/stilus`) — no external GUI
+toolkit needs to be installed.
+
 ### Build
 
 ```bash
-git clone https://github.com/soichi11208/rufus-linux
+git clone --recurse-submodules https://github.com/soichi11208/rufus-linux
 cd rufus-linux
 meson setup build
 meson compile -C build
 ```
+
+If you already cloned without submodules, run
+`git submodule update --init --recursive` before building.
 
 ### Install (for polkit integration)
 
@@ -90,17 +99,19 @@ rufus-linux/
 ├── LICENSE.txt
 ├── res/
 │   └── org.rufus.linux.policy   # polkit action definition
+├── third_party/
+│   └── stilus/        stilus GUI toolkit (git submodule)
 └── src/
     ├── rufus.h         shared types and prototypes
-    ├── main.c          GtkApplication entry point
-    ├── ui.c            GTK4 main window
+    ├── main.cpp        stilus application entry point
+    ├── ui.cpp          stilus main window
     ├── drive.c         USB drive enumeration (libudev)
     ├── iso.c           image-type detection (magic byte inspection)
     ├── part.c          partition table creation (libparted)
     ├── mkfs.c          fork+exec wrappers for mkfs.* and syslinux
     ├── format.c        write orchestrator
     ├── hash.c          MD5/SHA hashing (OpenSSL EVP)
-    ├── worker.c        background worker (GTask)
+    ├── worker.cpp      background worker thread
     ├── privops.c       pkexec privilege elevation
     └── log.c           logging (stderr + in-app buffer)
 ```
@@ -113,7 +124,7 @@ rufus-linux/
 | Disk I/O | DeviceIoControl | ioctl (BLKGETSIZE64 etc.) |
 | Partitioning | VDS | libparted |
 | Filesystem | built-in formatters | mkfs.* fork+exec |
-| GUI | Win32 dialogs | GTK4 |
+| GUI | Win32 dialogs | stilus (C++20, Wayland/X11, statically linked) |
 | Hashing | Win32 CryptAPI | OpenSSL EVP |
 | Privilege elevation | UAC | polkit / pkexec |
 | Settings storage | HKCU registry | `~/.config/rufus/settings.ini` (GKeyFile) |
